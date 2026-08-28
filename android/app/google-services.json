@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "331886771893",
+    "project_id": "jhon-seafood-app-9809b",
+    "storage_bucket": "jhon-seafood-app-9809b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:331886771893:android:eab8c5bc07531df0e808fc",
+        "android_client_info": {
+          "package_name": "com.example.jhon_seafood_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAg902rvqQjo-SMra6JM2xDb6-_Ma1HmYw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
