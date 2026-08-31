@@ -89,84 +89,116 @@ class _SalesChartScreenState extends State<SalesChartScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              height: 260,
-              child: maxRevenue == 0
-                  ? const Center(
-                      child: Text(
-                        'Belum ada data penjualan di bulan ini.',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    )
-                  : BarChart(
-                      BarChartData(
-                        maxY: maxRevenue * 1.2,
-                        barTouchData: BarTouchData(
-                          touchTooltipData: BarTouchTooltipData(
-                            getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                              return BarTooltipItem(
-                                'Tgl ${group.x}\n',
-                                const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
-                                children: [
-                                  TextSpan(
-                                    text: 'Rp ${rod.toY.toInt()}',
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.normal, fontSize: 11),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                        ),
-                        titlesData: FlTitlesData(
-                          bottomTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              interval: daysInMonth > 15 ? 5 : 2,
-                              getTitlesWidget: (value, meta) {
-                                final idx = value.toInt();
-                                if (idx < 1 || idx > daysInMonth) return const SizedBox();
-                                return Padding(
-                                  padding: const EdgeInsets.only(top: 6),
-                                  child: Text('$idx', style: const TextStyle(fontSize: 9)),
-                                );
-                              },
+           Container(
+  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+  decoration: BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(12),
+    border: Border.all(color: Colors.grey.shade200),
+  ),
+  height: 260,
+  child: maxRevenue == 0
+      ? const Center(
+          child: Text(
+            'Belum ada data penjualan di bulan ini.',
+            style: TextStyle(color: Colors.grey),
+          ),
+        )
+      : LayoutBuilder(
+          builder: (context, constraints) {
+            // Lebar tiap bar+jarak, cukup lega agar tidak dempet
+            const double widthPerDay = 32;
+            final chartWidth = daysInMonth * widthPerDay;
+            final needsScroll = chartWidth > constraints.maxWidth;
+
+            final chart = SizedBox(
+              width: needsScroll ? chartWidth : constraints.maxWidth,
+              height: 230,
+              child: BarChart(
+                BarChartData(
+                  maxY: maxRevenue * 1.2,
+                  barTouchData: BarTouchData(
+                    touchTooltipData: BarTouchTooltipData(
+                      getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                        return BarTooltipItem(
+                          'Tgl ${group.x}\n',
+                          const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                          children: [
+                            TextSpan(
+                              text: 'Rp ${rod.toY.toInt()}',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.normal, fontSize: 11),
                             ),
-                          ),
-                          leftTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 42,
-                              getTitlesWidget: (value, meta) {
-                                return Text(_shortCurrency(value), style: const TextStyle(fontSize: 9));
-                              },
-                            ),
-                          ),
-                          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                        ),
-                        borderData: FlBorderData(show: false),
-                        gridData: const FlGridData(show: true, drawVerticalLine: false),
-                        barGroups: List.generate(daysInMonth, (i) {
-                          final day = i + 1;
-                          final value = (revenue[day] ?? 0).toDouble();
-                          return BarChartGroupData(x: day, barRods: [
-                            BarChartRodData(
-                              toY: value,
-                              color: AppColors.primary,
-                              width: daysInMonth > 20 ? 6 : 10,
-                              borderRadius: BorderRadius.circular(3),
-                            ),
-                          ]);
-                        }),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  titlesData: FlTitlesData(
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 24,
+                        getTitlesWidget: (value, meta) {
+                          final idx = value.toInt();
+                          if (idx < 1 || idx > daysInMonth) return const SizedBox();
+                          // Tampilkan setiap tanggal karena sudah ada ruang lebar per bar
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text('$idx', style: const TextStyle(fontSize: 10)),
+                          );
+                        },
                       ),
                     ),
-            ),
+                    leftTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 42,
+                        getTitlesWidget: (value, meta) {
+                          return Text(_shortCurrency(value), style: const TextStyle(fontSize: 9));
+                        },
+                      ),
+                    ),
+                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  ),
+                  borderData: FlBorderData(show: false),
+                  gridData: const FlGridData(show: true, drawVerticalLine: false),
+                  barGroups: List.generate(daysInMonth, (i) {
+                    final day = i + 1;
+                    final value = (revenue[day] ?? 0).toDouble();
+                    return BarChartGroupData(x: day, barRods: [
+                      BarChartRodData(
+                        toY: value,
+                        color: AppColors.primary,
+                        width: 14,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ]);
+                  }),
+                ),
+              ),
+            );
+
+            if (!needsScroll) return chart;
+
+            return Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: chart,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  '← Geser untuk lihat tanggal lainnya',
+                  style: TextStyle(fontSize: 10, color: Colors.grey),
+                ),
+              ],
+            );
+          },
+        ),
+),
             const SizedBox(height: 28),
             const Text(
               'Menu Terlaris',

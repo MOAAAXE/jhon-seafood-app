@@ -1,15 +1,12 @@
-import 'dart:html' as html;
+import 'dart:typed_data';
+import 'package:file_saver/file_saver.dart';
 
 Future<String> saveExcelBytes(List<int> bytes, String fileName) async {
-  final blob = html.Blob(
-    [bytes],
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  final path = await FileSaver.instance.saveFile(
+    name: fileName.replaceAll('.xlsx', ''),
+    bytes: Uint8List.fromList(bytes),
+    ext: 'xlsx',
+    mimeType: MimeType.microsoftExcel,
   );
-  final url = html.Url.createObjectUrlFromBlob(blob);
-  final anchor = html.AnchorElement(href: url)..setAttribute('download', fileName);
-  html.document.body?.append(anchor);
-  anchor.click();
-  anchor.remove();
-  html.Url.revokeObjectUrl(url);
-  return 'File "$fileName" berhasil diunduh ke folder Downloads browser';
+  return 'File "$fileName" berhasil disimpan di $path';
 }

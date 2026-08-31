@@ -38,6 +38,8 @@ final CollectionReference ordersCollection =
     FirebaseFirestore.instance.collection('orders');
 final CollectionReference menuCollection =
     FirebaseFirestore.instance.collection('menu');
+final CollectionReference settingsCollection =
+    FirebaseFirestore.instance.collection('settings');
 
 class JhonSeafoodApp extends StatelessWidget {
   const JhonSeafoodApp({super.key});
@@ -73,8 +75,9 @@ class MenuItem {
 class OrderItem {
   final MenuItem menu;
   int quantity;
+  String note;
 
-  OrderItem({required this.menu, this.quantity = 1});
+  OrderItem({required this.menu, this.quantity = 1, this.note = ''});
 }
 
 class Order {
@@ -114,11 +117,12 @@ class Order {
         'paymentMethod': paymentMethod,
         'qrisImagePath': qrisImagePath,
         'items': items
-            .map((item) => {
-                  'quantity': item.quantity,
-                  'menu': item.menu.toMap(),
-                })
-            .toList(),
+    .map((item) => {
+          'quantity': item.quantity,
+          'menu': item.menu.toMap(),
+          'note': item.note,
+        })
+    .toList(),
       };
 
   factory Order.fromMap(Map<String, dynamic> json) {
@@ -134,11 +138,12 @@ class Order {
       paymentMethod: json['paymentMethod'] ?? 'Cash',
       qrisImagePath: json['qrisImagePath'],
       items: itemsJson
-          .map((item) => OrderItem(
-                quantity: item['quantity'],
-                menu: MenuItem.fromMap(item['menu']),
-              ))
-          .toList(),
+    .map((item) => OrderItem(
+          quantity: item['quantity'],
+          menu: MenuItem.fromMap(item['menu']),
+          note: item['note'] ?? '',
+        ))
+    .toList(),
     );
   }
 }
@@ -184,6 +189,48 @@ Future<void> loadOrdersFromStorage() async {
     dailyOrders = decodedList.map((json) => Order.fromMap(json)).toList();
   }
   masterQrisPath = prefs.getString('master_qris_path');
+}
+
+// ==========================================
+// PASSWORD AKUN (ADMIN & KASIR)
+// ==========================================
+Map<String, String> accountPasswords = {
+  'admin': 'admin123',
+  'kasir': 'kasir123',
+};
+
+Future<void> saveCredentialsToStorage() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('account_passwords', jsonEncode(accountPasswords));
+
+  // Sync ke Firestore supaya password baru berlaku juga di device lain.
+  try {
+    await settingsCollection.doc('credentials').set(accountPasswords);
+  } catch (e) {
+    debugPrint('Gagal sinkronisasi password ke Firestore: $e');
+  }
+}
+
+Future<void> loadCredentialsFromStorage() async {
+  final prefs = await SharedPreferences.getInstance();
+  final String? jsonString = prefs.getString('account_passwords');
+  if (jsonString != null) {
+    final Map<String, dynamic> decoded = jsonDecode(jsonString);
+    accountPasswords = decoded.map((key, value) => MapEntry(key, value.toString()));
+  }
+
+  // Tarik juga versi terbaru dari Firestore (kalau sudah pernah diubah
+  // dari device lain), supaya password selalu konsisten di semua device.
+  try {
+    final doc = await settingsCollection.doc('credentials').get();
+    if (doc.exists) {
+      final data = doc.data() as Map<String, dynamic>;
+      accountPasswords = data.map((key, value) => MapEntry(key, value.toString()));
+      await prefs.setString('account_passwords', jsonEncode(accountPasswords));
+    }
+  } catch (e) {
+    debugPrint('Gagal sinkronisasi password dari Firestore: $e');
+  }
 }
 
 // ==========================================
@@ -299,6 +346,7 @@ class _LoginScreenState extends State<LoginScreen> {
       loadMenuFromStorage(),
       loadOrdersFromStorage(),
       loadNotificationsFromStorage(),
+      loadCredentialsFromStorage(),
     ]).then((_) async {
       // Setelah data lokal siap, tarik juga data terbaru dari Firestore
       // (misalnya order yang dibuat dari device/browser lain).
@@ -312,8 +360,11 @@ class _LoginScreenState extends State<LoginScreen> {
     String password = _passwordController.text.trim();
     String? role;
 
-    if (username == 'admin' && password == 'admin123') role = 'Admin';
-    else if (username == 'kasir' && password == 'kasir123') role = 'Kasir';
+    if (username == 'admin' && password == accountPasswords['admin']) {
+      role = 'Admin';
+    } else if (username == 'kasir' && password == accountPasswords['kasir']) {
+      role = 'Kasir';
+    }
 
     if (role != null) {
       Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => MainNavigationScreen(role: role!)));
@@ -435,6 +486,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         backgroundColor: AppColors.primary,
         actions: [
           if (isAdmin)
+            IconButton(
+              icon: const Icon(Icons.password, color: AppColors.white),
+              tooltip: 'Ubah Password',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ChangePasswordScreen()),
+                );
+              },
+            ),
+          if (isAdmin)
             Stack(
               alignment: Alignment.center,
               children: [
@@ -491,6 +553,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   List<OrderItem> currentCart = [];
   String _searchQuery = "";
   final TextEditingController _searchController = TextEditingController();
+  bool _cartPanelExpanded = true;
 
   void addToCart(MenuItem menu) {
     final existingIndex = currentCart.indexWhere((item) => item.menu.id == menu.id);
@@ -511,6 +574,49 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   }
 
   int calculateTotal() => currentCart.fold(0, (sum, item) => sum + (item.menu.price * item.quantity));
+
+  int get totalItemCount => currentCart.fold(0, (sum, item) => sum + item.quantity);
+
+  // ==========================================
+  // CATATAN PER ITEM (BARU)
+  // Membuka dialog kecil untuk menambah/mengubah
+  // catatan khusus pada satu item di keranjang,
+  // misalnya "pedas level 2", "tanpa bawang", dst.
+  // ==========================================
+  void _editItemNote(OrderItem item) {
+    final TextEditingController noteController = TextEditingController(text: item.note);
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Catatan untuk ${item.menu.name}'),
+          content: TextField(
+            controller: noteController,
+            maxLines: 3,
+            autofocus: true,
+            decoration: const InputDecoration(
+              hintText: 'Contoh: pedas level 2, tanpa bawang, extra sambal...',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
+            ElevatedButton(
+              style: AppButtonStyles.primary,
+              onPressed: () {
+                setState(() {
+                  item.note = noteController.text.trim();
+                });
+                Navigator.pop(context);
+              },
+              child: const Text('Simpan'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   void showCheckoutDialog() {
     if (currentCart.isEmpty) return;
@@ -538,8 +644,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                     const SizedBox(height: 10),
                     TextField(controller: tableController, decoration: const InputDecoration(labelText: 'No. Meja', prefixIcon: Icon(Icons.table_restaurant))),
                     const SizedBox(height: 10),
-                    TextField(controller: notesController, maxLines: 2, decoration: const InputDecoration(labelText: 'Catatan tambahan...', prefixIcon: Icon(Icons.note))),
-                    const SizedBox(height: 15),
                     DropdownButtonFormField<String>(
                       value: selectedPayment,
                       decoration: const InputDecoration(labelText: 'Metode Pembayaran', border: OutlineInputBorder()),
@@ -706,6 +810,145 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Transaksi Berhasil Disimpan!'), backgroundColor: Colors.green));
   }
 
+  // ==========================================
+  // PANEL RINGKASAN PESANAN
+  // Menampilkan semua item yang sudah dipilih,
+  // supaya kasir tidak perlu scroll ke atas
+  // untuk mengecek pesanan yang sedang dibuat.
+  // Setiap item juga punya baris catatan kecil
+  // di bawahnya (tap untuk tambah/ubah catatan).
+  // ==========================================
+  Widget _buildCartSummaryPanel() {
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: _cartPanelExpanded ? 260 : 52,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted,
+        border: Border(top: BorderSide(color: AppColors.primarySoftBorder)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _cartPanelExpanded = !_cartPanelExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.receipt_long, size: 18, color: AppColors.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Pesanan Saat Ini · $totalItemCount item',
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.textPrimary),
+                      ),
+                    ],
+                  ),
+                  Icon(
+                    _cartPanelExpanded ? Icons.expand_more : Icons.expand_less,
+                    color: AppColors.textSecondary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_cartPanelExpanded)
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.only(bottom: 8),
+                itemCount: currentCart.length,
+                separatorBuilder: (context, index) => Divider(height: 1, color: AppColors.borderGrey.withOpacity(0.5)),
+                itemBuilder: (context, index) {
+                  final item = currentCart[index];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                item.menu.name,
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              iconSize: 18,
+                              icon: const Icon(Icons.remove_circle_outline, color: AppColors.danger),
+                              onPressed: () => removeFromCart(item.menu),
+                            ),
+                            SizedBox(
+                              width: 20,
+                              child: Text(
+                                '${item.quantity}',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            IconButton(
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              iconSize: 18,
+                              icon: const Icon(Icons.add_circle, color: AppColors.primary),
+                              onPressed: () => addToCart(item.menu),
+                            ),
+                            const SizedBox(width: 12),
+                            SizedBox(
+                              width: 78,
+                              child: Text(
+                                formatRupiah(item.menu.price * item.quantity),
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primary),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        InkWell(
+                          onTap: () => _editItemNote(item),
+                          child: Row(
+                            children: [
+                              Icon(
+                                item.note.isEmpty ? Icons.note_add_outlined : Icons.edit_note,
+                                size: 14,
+                                color: item.note.isEmpty ? AppColors.textSecondary : AppColors.ocean,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  item.note.isEmpty ? 'Tambah catatan...' : item.note,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontStyle: FontStyle.italic,
+                                    color: item.note.isEmpty ? AppColors.textSecondary : AppColors.ocean,
+                                    fontWeight: item.note.isEmpty ? FontWeight.normal : FontWeight.w600,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filteredMenu = seafoodMenu.where((menu) => menu.name.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
@@ -751,6 +994,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                   },
                 ),
         ),
+        if (currentCart.isNotEmpty) _buildCartSummaryPanel(),
         Container(
           padding: const EdgeInsets.all(16),
           color: AppColors.white,
@@ -1053,6 +1297,203 @@ class _ManageMenuScreenState extends State<ManageMenuScreen> {
               },
             ),
       floatingActionButton: isAdmin ? FloatingActionButton(backgroundColor: Colors.deepOrange, foregroundColor: Colors.white, onPressed: () => _showFormDialog(), child: const Icon(Icons.add)) : null,
+    );
+  }
+}
+
+// ==========================================
+// 8. FEATURE SCREEN: UBAH PASSWORD (ADMIN ONLY)
+// ==========================================
+class ChangePasswordScreen extends StatefulWidget {
+  const ChangePasswordScreen({super.key});
+
+  @override
+  State<ChangePasswordScreen> createState() => _ChangePasswordScreenState();
+}
+
+class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
+  String _selectedAccount = 'admin';
+  final TextEditingController _currentAdminPasswordController = TextEditingController();
+  final TextEditingController _newPasswordController = TextEditingController();
+  final TextEditingController _confirmPasswordController = TextEditingController();
+
+  bool _obscureCurrent = true;
+  bool _obscureNew = true;
+  bool _obscureConfirm = true;
+  bool _isSaving = false;
+
+  void _submit() async {
+    final currentAdminPass = _currentAdminPasswordController.text.trim();
+    final newPass = _newPasswordController.text.trim();
+    final confirmPass = _confirmPasswordController.text.trim();
+
+    // Verifikasi identitas admin yang sedang login, supaya tidak
+    // sembarang orang yang kebetulan membuka layar ini bisa ganti password.
+    if (currentAdminPass != accountPasswords['admin']) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password admin saat ini salah!'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    if (newPass.length < 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password baru minimal 4 karakter!'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    if (newPass != confirmPass) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Konfirmasi password baru tidak cocok!'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    // Cegah password baru sama dengan password lama akun yang dipilih.
+    if (newPass == accountPasswords[_selectedAccount]) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Password baru tidak boleh sama dengan password ${_selectedAccount == 'admin' ? 'Admin' : 'Kasir'} saat ini!',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    setState(() {
+      accountPasswords[_selectedAccount] = newPass;
+    });
+    await saveCredentialsToStorage();
+    setState(() => _isSaving = false);
+
+    _currentAdminPasswordController.clear();
+    _newPasswordController.clear();
+    _confirmPasswordController.clear();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Password akun ${_selectedAccount == 'admin' ? 'Admin' : 'Kasir'} berhasil diubah!',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Ubah Password'),
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Pilih akun yang ingin diubah passwordnya',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _selectedAccount,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+              items: const [
+                DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                DropdownMenuItem(value: 'kasir', child: Text('Kasir')),
+              ],
+              onChanged: (val) {
+                if (val != null) setState(() => _selectedAccount = val);
+              },
+            ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 8),
+            const Text(
+              'Konfirmasi identitas Admin',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Masukkan password Admin saat ini untuk mengonfirmasi perubahan.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _currentAdminPasswordController,
+              obscureText: _obscureCurrent,
+              decoration: InputDecoration(
+                labelText: 'Password Admin Saat Ini',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.admin_panel_settings),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureCurrent ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setState(() => _obscureCurrent = !_obscureCurrent),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Password Baru untuk ${_selectedAccount == 'admin' ? 'Admin' : 'Kasir'}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _newPasswordController,
+              obscureText: _obscureNew,
+              decoration: InputDecoration(
+                labelText: 'Password Baru',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.lock),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureNew ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setState(() => _obscureNew = !_obscureNew),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _confirmPasswordController,
+              obscureText: _obscureConfirm,
+              decoration: InputDecoration(
+                labelText: 'Konfirmasi Password Baru',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.lock_outline),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureConfirm ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                style: AppButtonStyles.primary,
+                onPressed: _isSaving ? null : _submit,
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.save),
+                label: Text(_isSaving ? 'Menyimpan...' : 'SIMPAN PASSWORD BARU'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
