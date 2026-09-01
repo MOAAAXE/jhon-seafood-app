@@ -160,14 +160,22 @@ List<MenuItem> seafoodMenu = [
 List<Order> dailyOrders = [];
 String? masterQrisPath;
 
-final _menuCollection = FirebaseFirestore.instance.collection('seafood_menu');
-
 // ---------- MENU ----------
 
 Future<void> saveMenuToStorage() async {
   final prefs = await SharedPreferences.getInstance();
   List<Map<String, dynamic>> jsonList = seafoodMenu.map((item) => item.toMap()).toList();
   await prefs.setString('saved_seafood_menu', jsonEncode(jsonList));
+}
+
+Future<void> loadMenuFromFirebase() async {
+  final snapshot = await menuCollection.get(); // pakai 'menu', bukan 'seafood_menu'
+  if (snapshot.docs.isNotEmpty) {
+    seafoodMenu = snapshot.docs
+        .map((doc) => MenuItem.fromMap(doc.data() as Map<String, dynamic>))
+        .toList();
+    await saveMenuToStorage(); // simpan ulang ke cache lokal juga
+  }
 }
 
 Future<void> loadMenuFromStorage() async {
@@ -188,16 +196,7 @@ Future<void> updateMenuItem(MenuItem item) async {
     seafoodMenu.add(item);
   }
   await saveMenuToStorage(); // simpan lokal juga
-  await _menuCollection.doc(item.id).set(item.toMap());
-}
-
-Future<void> loadMenuFromFirebase() async {
-  final snapshot = await _menuCollection.get();
-  if (snapshot.docs.isNotEmpty) {
-    seafoodMenu = snapshot.docs
-        .map((doc) => MenuItem.fromMap(doc.data()))
-        .toList();
-  }
+  await menuCollection.doc(item.id).set(item.toMap());
 }
 
 // ---------- ORDERS ----------
@@ -375,9 +374,9 @@ class _LoginScreenState extends State<LoginScreen> {
       loadNotificationsFromStorage(),
       loadCredentialsFromStorage(),
     ]).then((_) async {
-      // Setelah data lokal siap, tarik juga data terbaru dari Firestore
-      // (misalnya order yang dibuat dari device/browser lain).
       await syncOrdersFromFirestore();
+      await loadMenuFromFirebase();
+       await syncOrdersFromFirestore();
       if (mounted) setState(() {});
     });
   }
