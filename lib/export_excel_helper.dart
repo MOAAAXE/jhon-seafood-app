@@ -9,8 +9,9 @@ const List<String> _monthNamesId = [
 
 /// Membuat file Excel berisi rekap omzet & jumlah transaksi PER BULAN
 /// untuk satu tahun tertentu (1 baris = 1 bulan), lalu
-/// menyimpan/mengunduhnya. Mengembalikan keterangan lokasi file.
-Future<String> exportYearlyMonthlyRecapToExcel(int year) async {
+/// menyimpan/mengunduhnya. Mengembalikan lokasi file, atau null
+/// kalau pengguna membatalkan penyimpanan.
+Future<String?> exportYearlyMonthlyRecapToExcel(int year) async {
   final excelFile = Excel.createExcel();
   const sheetName = 'Rekap Bulanan';
   final Sheet sheet = excelFile[sheetName];
@@ -68,5 +69,5 @@ Future<String> exportYearlyMonthlyRecapToExcel(int year) async {
   }
 
   final fileName = 'Rekap_Bulanan_JhonSeafood_$year.xlsx';
-  return saveExcelBytes(bytes, fileName);
+  return saveExcelBytes(bytes, fileName); // sekarang cocok: Future<String?>
 }

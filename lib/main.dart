@@ -160,6 +160,10 @@ List<MenuItem> seafoodMenu = [
 List<Order> dailyOrders = [];
 String? masterQrisPath;
 
+final _menuCollection = FirebaseFirestore.instance.collection('seafood_menu');
+
+// ---------- MENU ----------
+
 Future<void> saveMenuToStorage() async {
   final prefs = await SharedPreferences.getInstance();
   List<Map<String, dynamic>> jsonList = seafoodMenu.map((item) => item.toMap()).toList();
@@ -174,6 +178,29 @@ Future<void> loadMenuFromStorage() async {
     seafoodMenu = decodedList.map((item) => MenuItem.fromMap(item)).toList();
   }
 }
+
+// Update satu item menu + sync ke Firestore
+Future<void> updateMenuItem(MenuItem item) async {
+  final index = seafoodMenu.indexWhere((m) => m.id == item.id);
+  if (index != -1) {
+    seafoodMenu[index] = item;
+  } else {
+    seafoodMenu.add(item);
+  }
+  await saveMenuToStorage(); // simpan lokal juga
+  await _menuCollection.doc(item.id).set(item.toMap());
+}
+
+Future<void> loadMenuFromFirebase() async {
+  final snapshot = await _menuCollection.get();
+  if (snapshot.docs.isNotEmpty) {
+    seafoodMenu = snapshot.docs
+        .map((doc) => MenuItem.fromMap(doc.data()))
+        .toList();
+  }
+}
+
+// ---------- ORDERS ----------
 
 Future<void> saveOrdersToStorage() async {
   final prefs = await SharedPreferences.getInstance();
@@ -1064,11 +1091,17 @@ class _DailyReportScreenState extends State<DailyReportScreen> {
     setState(() => _isExporting = true);
     try {
       final result = await exportYearlyMonthlyRecapToExcel(_selectedDate.year);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result), backgroundColor: AppColors.success),
-        );
-      }
+if (mounted) {
+  if (result != null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result), backgroundColor: AppColors.success),
+    );
+  } else {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Penyimpanan dibatalkan')),
+    );
+  }
+}
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
