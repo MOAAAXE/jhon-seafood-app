@@ -89,8 +89,9 @@ class Order {
   final String customerName;
   final String tableNumber;
   final String notes;
-  final String paymentMethod;
-  final String? qrisImagePath;
+  final String orderType; // 'Dine In' atau 'Take Away'
+  String paymentMethod; // Bukan final -> bisa diedit dari Laporan
+  String? qrisImagePath; // Bukan final -> bisa diedit dari Laporan
 
   Order({
     required this.orderId,
@@ -103,6 +104,7 @@ class Order {
     required this.notes,
     required this.paymentMethod,
     this.qrisImagePath,
+    this.orderType = 'Dine In',
   });
 
   // Dipakai untuk simpan ke SharedPreferences maupun Firestore
@@ -114,6 +116,7 @@ class Order {
         'customerName': customerName,
         'tableNumber': tableNumber,
         'notes': notes,
+        'orderType': orderType,
         'paymentMethod': paymentMethod,
         'qrisImagePath': qrisImagePath,
         'items': items
@@ -135,6 +138,7 @@ class Order {
       customerName: json['customerName'] ?? 'Umum',
       tableNumber: json['tableNumber'] ?? '-',
       notes: json['notes'] ?? '',
+      orderType: json['orderType'] ?? 'Dine In',
       paymentMethod: json['paymentMethod'] ?? 'Cash',
       qrisImagePath: json['qrisImagePath'],
       items: itemsJson
@@ -151,11 +155,7 @@ class Order {
 // ==========================================
 // 2. STORAGE MANAGEMENT
 // ==========================================
-List<MenuItem> seafoodMenu = [
-  MenuItem(id: '1', name: 'Kepiting Saus Padang', price: 120000),
-  MenuItem(id: '2', name: 'Udang Bakar Madu', price: 65000),
-  MenuItem(id: '3', name: 'Cumi Goreng Tepung', price: 50000),
-];
+List<MenuItem> seafoodMenu = [];
 
 List<Order> dailyOrders = [];
 String? masterQrisPath;
@@ -651,6 +651,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final TextEditingController tableController = TextEditingController();
     final TextEditingController notesController = TextEditingController();
     String selectedPayment = 'Cash';
+    String selectedOrderType = 'Dine In';
     String? uploadedProofPath;
     final ImagePicker picker = ImagePicker();
 
@@ -666,9 +667,66 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // ==========================================
+                    // TIPE PESANAN: DINE IN / TAKE AWAY (BARU)
+                    // ==========================================
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Tipe Pesanan', style: AppTextStyles.qrisSectionLabel),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                        child: ChoiceChip(
+                          label: const Text('Dine In'),
+                          avatar: const Icon(Icons.table_restaurant, size: 16),
+                          selected: selectedOrderType == 'Dine In',
+                          selectedColor: AppColors.primary.withOpacity(0.15),
+                          labelStyle: TextStyle(
+                            color: selectedOrderType == 'Dine In' ? AppColors.primary : AppColors.textPrimary,
+                            fontWeight: selectedOrderType == 'Dine In' ? FontWeight.bold : FontWeight.normal,
+                          ),
+                          onSelected: (_) => setDialogState(() {
+                            selectedOrderType = 'Dine In';
+                            // reset kalau isinya masih auto-fill dari Take Away
+                            if (tableController.text.trim() == 'Takeaway') {
+                              tableController.clear();
+                            }
+                          }),
+                        ),
+                      ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text('Take Away'),
+                            avatar: const Icon(Icons.shopping_bag_outlined, size: 16),
+                            selected: selectedOrderType == 'Take Away',
+                            selectedColor: AppColors.primary.withOpacity(0.15),
+                            labelStyle: TextStyle(
+                              color: selectedOrderType == 'Take Away' ? AppColors.primary : AppColors.textPrimary,
+                              fontWeight: selectedOrderType == 'Take Away' ? FontWeight.bold : FontWeight.normal,
+                            ),
+                            onSelected: (_) => setDialogState(() {
+                              selectedOrderType = 'Take Away';
+                              if (tableController.text.trim().isEmpty) {
+                                tableController.text = 'Takeaway';
+                              }
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
                     TextField(controller: customerController, decoration: const InputDecoration(labelText: 'Nama Pelanggan', prefixIcon: Icon(Icons.person))),
                     const SizedBox(height: 10),
-                    TextField(controller: tableController, decoration: const InputDecoration(labelText: 'No. Meja', prefixIcon: Icon(Icons.table_restaurant))),
+                    TextField(
+                      controller: tableController,
+                      decoration: InputDecoration(
+                        labelText: selectedOrderType == 'Take Away' ? 'Keterangan (mis. Takeaway)' : 'No. Meja',
+                        prefixIcon: const Icon(Icons.table_restaurant),
+                      ),
+                    ),
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
                       value: selectedPayment,
@@ -783,10 +841,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
                     _processCheckout(
                       customerName: customerController.text.isEmpty ? 'Umum' : customerController.text,
-                      tableNumber: tableController.text.isEmpty ? '-' : tableController.text,
+                      tableNumber: tableController.text.isEmpty
+                          ? (selectedOrderType == 'Take Away' ? 'Takeaway' : '-')
+                          : tableController.text,
                       notes: notesController.text,
                       paymentMethod: selectedPayment,
                       qrisImagePath: uploadedProofPath,
+                      orderType: selectedOrderType,
                     );
                     Navigator.pop(context);
                   },
@@ -806,6 +867,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     required String notes,
     required String paymentMethod,
     String? qrisImagePath,
+    required String orderType,
   }) {
     final newOrder = Order(
       orderId: 'JS-${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}',
@@ -818,6 +880,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       notes: notes,
       paymentMethod: paymentMethod,
       qrisImagePath: qrisImagePath,
+      orderType: orderType,
     );
 
     setState(() {
@@ -1086,6 +1149,125 @@ class _DailyReportScreenState extends State<DailyReportScreen> {
     );
   }
 
+  // ==========================================
+  // EDIT METODE PEMBAYARAN (BARU)
+  // Karena sistemnya "makan dulu, baru bayar",
+  // saat transaksi dibuat metode pembayaran
+  // belum tentu final. Fungsi ini membuka dialog
+  // untuk mengubah Cash <-> QRIS (beserta bukti
+  // foto kalau QRIS) pada order yang sudah tercatat.
+  // ==========================================
+  void _editPaymentMethod(Order order) {
+    String selectedPayment = order.paymentMethod;
+    String? proofPath = order.qrisImagePath;
+    final ImagePicker picker = ImagePicker();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Edit Metode Pembayaran'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${order.customerName} • ${formatRupiah(order.totalAmount)}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Gunakan ini kalau pelanggan baru bayar setelah makan.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: selectedPayment,
+                      decoration: const InputDecoration(labelText: 'Metode Pembayaran', border: OutlineInputBorder()),
+                      items: ['Cash', 'QRIS'].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+                      onChanged: (val) => setDialogState(() => selectedPayment = val!),
+                    ),
+                    if (selectedPayment == 'QRIS') ...[
+                      const SizedBox(height: 14),
+                      const Text('Bukti Pembayaran Pelanggan:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      const SizedBox(height: 8),
+                      if (proofPath != null)
+                        Container(
+                          height: 140,
+                          decoration: AppDecorations.qrisImageBox,
+                          child: kIsWeb
+                              ? Image.network(proofPath!, fit: BoxFit.contain)
+                              : Image.file(File(proofPath!), fit: BoxFit.contain),
+                        ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          ElevatedButton.icon(
+                            style: AppButtonStyles.infoDark,
+                            onPressed: () async {
+                              final XFile? photo = await picker.pickImage(source: ImageSource.camera);
+                              if (photo != null) setDialogState(() => proofPath = photo.path);
+                            },
+                            icon: const Icon(Icons.camera_alt),
+                            label: const Text('Foto Bukti'),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+                              if (image != null) setDialogState(() => proofPath = image.path);
+                            },
+                            icon: const Icon(Icons.collections),
+                            label: const Text('Galeri'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
+                ElevatedButton(
+                  style: AppButtonStyles.primary,
+                  onPressed: () async {
+                    if (selectedPayment == 'QRIS' && proofPath == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Harap lampirkan foto bukti pembayaran QRIS!'), backgroundColor: Colors.red),
+                      );
+                      return;
+                    }
+
+                    setState(() {
+                      order.paymentMethod = selectedPayment;
+                      order.qrisImagePath = selectedPayment == 'QRIS' ? proofPath : null;
+                    });
+                    await saveOrdersToStorage();
+                    // Sinkronkan perubahan ke Firestore juga.
+                    ordersCollection.doc(order.orderId).set(order.toMap()).catchError((e) {
+                      debugPrint('Gagal sinkronisasi update pembayaran ke Firestore: $e');
+                    });
+
+                    if (context.mounted) Navigator.pop(context);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Metode pembayaran berhasil diperbarui!'), backgroundColor: Colors.green),
+                      );
+                    }
+                  },
+                  child: const Text('Simpan'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _exportToExcel() async {
     setState(() => _isExporting = true);
     try {
@@ -1186,8 +1368,13 @@ if (mounted) {
                         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         child: ExpansionTile(
                           leading: Icon(order.paymentMethod == 'QRIS' ? Icons.qr_code : Icons.money, color: Colors.green),
-                          title: Text('${order.customerName} (Meja ${order.tableNumber})', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text('${order.dateTime.hour.toString().padLeft(2, '0')}:${order.dateTime.minute.toString().padLeft(2, '0')} | ${order.paymentMethod}'),
+                          title: Text(
+                            '${order.customerName} (${order.orderType == 'Take Away' ? 'Take Away' : 'Meja ${order.tableNumber}'})',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            '${order.dateTime.hour.toString().padLeft(2, '0')}:${order.dateTime.minute.toString().padLeft(2, '0')} | ${order.paymentMethod} | ${order.orderType}',
+                          ),
                           trailing: Text(formatRupiah(order.totalAmount), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepOrange)),
                           children: [
                             Container(
@@ -1214,7 +1401,18 @@ if (mounted) {
                                     ),
                                   ],
                                   const Divider(),
-                                  Text('Kasir: ${order.cashierName}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text('Kasir: ${order.cashierName}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                      TextButton.icon(
+                                        style: TextButton.styleFrom(foregroundColor: Colors.deepOrange),
+                                        onPressed: () => _editPaymentMethod(order),
+                                        icon: const Icon(Icons.edit, size: 16),
+                                        label: const Text('Edit Pembayaran'),
+                                      ),
+                                    ],
+                                  ),
                                 ],
                               ),
                             )
