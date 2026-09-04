@@ -15,10 +15,73 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  runApp(const JhonSeafoodApp());
+
+  // ==========================================
+  // PERBAIKAN: bungkus Firebase init dengan try-catch.
+  // Kalau konfigurasi Firebase bermasalah (google-services.json
+  // tidak sesuai, applicationId tidak match, dll), app TIDAK
+  // langsung crash tanpa keterangan -> user akan melihat layar
+  // error yang jelas, dan kita bisa lihat pesan errornya lewat
+  // `flutter run --release` / adb logcat.
+  // ==========================================
+  String? initError;
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e, stack) {
+    debugPrint('GAGAL INIT FIREBASE: $e');
+    debugPrint('$stack');
+    initError = e.toString();
+  }
+
+  runApp(initError == null
+      ? const JhonSeafoodApp()
+      : FirebaseInitErrorApp(error: initError));
+}
+
+// ==========================================
+// TAMPILAN ERROR KALAU FIREBASE GAGAL INIT
+// Supaya app tetap "terbuka" dan menunjukkan
+// pesan yang jelas, bukan force-close diam-diam.
+// ==========================================
+class FirebaseInitErrorApp extends StatelessWidget {
+  final String error;
+  const FirebaseInitErrorApp({super.key, required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 64),
+                const SizedBox(height: 16),
+                const Text(
+                  'Gagal menghubungkan ke Firebase',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(error, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey)),
+                const SizedBox(height: 16),
+                const Text(
+                  'Cek google-services.json, applicationId, dan koneksi internet.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ==========================================
@@ -168,13 +231,25 @@ Future<void> saveMenuToStorage() async {
   await prefs.setString('saved_seafood_menu', jsonEncode(jsonList));
 }
 
+// ==========================================
+// PERBAIKAN: bungkus try-catch supaya kegagalan
+// Firestore (tidak ada internet, security rules
+// memblokir, dsb) tidak jadi unhandled exception
+// saat LoginScreen initState() memanggil fungsi ini.
+// ==========================================
 Future<void> loadMenuFromFirebase() async {
-  final snapshot = await menuCollection.get(); // pakai 'menu', bukan 'seafood_menu'
-  if (snapshot.docs.isNotEmpty) {
-    seafoodMenu = snapshot.docs
-        .map((doc) => MenuItem.fromMap(doc.data() as Map<String, dynamic>))
-        .toList();
-    await saveMenuToStorage(); // simpan ulang ke cache lokal juga
+  try {
+    final snapshot = await menuCollection.get(); // pakai 'menu', bukan 'seafood_menu'
+    if (snapshot.docs.isNotEmpty) {
+      seafoodMenu = snapshot.docs
+          .map((doc) => MenuItem.fromMap(doc.data() as Map<String, dynamic>))
+          .toList();
+      await saveMenuToStorage(); // simpan ulang ke cache lokal juga
+    }
+  } catch (e) {
+    debugPrint('Gagal memuat menu dari Firestore: $e');
+    // Tidak melempar ulang error -> app tetap jalan pakai data lokal
+    // yang sudah dimuat lewat loadMenuFromStorage().
   }
 }
 
